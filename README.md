@@ -1,2 +1,2 @@
 # annual-report-graphs
-Generates graphs for annual WQ reports
+Generates graphs for annual WQ reports.
