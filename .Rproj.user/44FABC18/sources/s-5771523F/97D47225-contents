@@ -1,9 +1,3 @@
-```{r}
-# Title: D-WQ Annual Report Stats
-# Purpose: Generate stats for D-WQ annual reports
-# Author: Sarah Perry
-# Contact: sarah.perry@water.ca.gov
-```
 
 ```{r warning=FALSE, message=FALSE}
 # import packages
