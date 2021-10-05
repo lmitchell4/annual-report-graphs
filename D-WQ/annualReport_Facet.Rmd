@@ -17,49 +17,68 @@ library(RColorBrewer)
 library(grid)
 
 # import functions
-source('annualReport_funcs.R')
+source('D-WQ/annualReport_funcs.R')
 ```
 
 ```{r message=FALSE}
 # import data
-df_wq <- read_csv('Data/EMP_delta_water_quality_1975_2020.csv')
+df_wq <- read_csv('D-WQ/Data/EMP_delta_water_quality_1975_2020.csv', col_types = cols(.default = 'c'))
 
 # convert month to abbrv
-df_wq$Date <- as.Date(df_wq$Date, format = '%m/%d/%Y')
-df_wq$Month <- month.abb[month(df_wq$Date)]
+df_wq$Year <- year(as.Date(df_wq$Date, '%m/%d/%Y'))
+df_wq$Month <- month(as.Date(df_wq$Date, '%m/%d/%Y'))
+df_wq$Month <- month.abb[df_wq$Month]
 
 # add month-year column
-df_wq$Monyear <- format(as.yearmon(df_wq$Date), '%Y-%m')
+df_wq$Monyear <- paste(df_wq$Month,df_wq$Year, sep = ' ')
+df_wq$Monyear <- my(df_wq$Monyear)
 
-# create region col
+# assign regions
+df_wq <- assign_regions(df_wq)
+
+# add 'full group' column (ie. region + month-year)
+df_wq$FullGroup <- paste(df_wq$Region,df_wq$Monyear, sep = ' - ')
+df_wq$FullGroup <- as.factor(df_wq$FullGroup)
+
+year <- year(Sys.Date())-1
+
+df_wq <- subset(df_wq, Year %in% c(year-1,year),  select = c('Station','Monyear','Region','FullGroup','SpCndSurface_sign','SpCndSurface_val','TurbiditySurface_sign','TurbiditySurface_val','Chla_sign','Chla_val','DissAmmonia_sign','DissAmmonia_val','DissNitrateNitrite_sign','DissNitrateNitrite_val','TotPhos_sign','TotPhos_val'))
+
+# organize df
+df_wq <- df_wq %>%
+  pivot_longer(cols = contains('_'), names_pattern = '(.*)_(.*)', names_to = c('Analyte','Int')) %>%
+  pivot_wider(names_from = Int, values_from = value) %>%
+  rename(Sign = sign, Value = val)
+
+df_wq <- subset(df_wq, !is.na(Region))
+df_wq <- subset(df_wq, Value != 'ND')
+df_wq$Value <- as.numeric(df_wq$Value)
 ```
 
 ```{r}
-reg_order_three <- c('Central Delta','Confluence','Northern Interior Delta','San Pablo Bay','Southern Interior Delta','Suisun & Grizzly Bays')
-df_wq_three <- df_wq %>%
-  mutate(Region = factor(Region, levels = reg_order_three)) %>%
-  arrange(Region) 
+# reg_order_three <- c('Central Delta','Confluence','Northern Interior Delta','San Pablo Bay','Southern Interior Delta','Suisun & Grizzly Bays')
+# df_wq_three <- df_wq %>%
+#   mutate(Region = factor(Region, levels = reg_order_three)) %>%
+#   arrange(Region) 
 
 reg_order_two <- c('Central Delta','Northern Interior Delta','Southern Interior Delta','Confluence','San Pablo Bay','Suisun & Grizzly Bays')
 df_wq_two <- df_wq %>%
   mutate(Region = factor(Region, levels = reg_order_two)) %>%
-  arrange(Region) 
+  arrange(Region)
 ```
 
 ```{r 3x3}
-source('annualReport_funcs.R')
-
 analytes <- unique(df_wq_three$Analyte)
 
 #create segment subset
-seg_subset <-subset(df_wq_three, is.na(df_wq_three$Measurement))
+seg_subset <- subset(df_wq_three, df_wq_three$Sign == '<')
 
 #create segment df
 df_seg_vert = data.frame(
   x = seg_subset$Monyear,
   xend = seg_subset$Monyear,
   y = 0,
-  yend = seg_subset$RL,
+  yend = seg_subset$Value,
   Analyte = seg_subset$Analyte,
   Station = seg_subset$Station,
   Region = seg_subset$Region,
@@ -70,8 +89,8 @@ df_seg_vert = data.frame(
 df_seg_horz = data.frame(
   x = seg_subset$Monyear-10,
   xend = seg_subset$Monyear+10,
-  y = seg_subset$RL,
-  yend = seg_subset$RL,
+  y = seg_subset$Value,
+  yend = seg_subset$Value,
   Analyte = seg_subset$Analyte,
   Station = seg_subset$Station,
   Region = seg_subset$Region,
@@ -95,10 +114,10 @@ for (i in seq(length(analytes))){
     filter(Analyte == analytes[i])
   
   if (analytes[i] != 'SpCndSurface') {
-    y_max <- max(df_wq_three_filt$Measurement, na.rm = TRUE)
+    y_max <- max(df_wq_three_filt$Value, na.rm = TRUE)
   } else {
-    y_max_int <- max(df_wq_three_filt[df_wq_three_filt$Region %in% int_delta,]$Measurement, na.rm = TRUE)
-    y_max_out <- max(df_wq_three_filt[!df_wq_three_filt$Region %in% int_delta,]$Measurement, na.rm = TRUE)
+    y_max_int <- max(df_wq_three_filt[df_wq_three_filt$Region %in% int_delta,]$Value, na.rm = TRUE)
+    y_max_out <- max(df_wq_three_filt[!df_wq_three_filt$Region %in% int_delta,]$Value, na.rm = TRUE)
   }
 
   out <- by(data = df_wq_three_filt, INDICES = df_wq_three_filt$Region, FUN = function(m) {
@@ -133,8 +152,8 @@ for (i in seq(length(analytes))){
       p <- ggplot() +
         geom_segment(data = df_seg_vert_filt, mapping = aes(x = x, xend = xend, y = y, yend = yend, color = Station), size = .8, lty = 5) +
         geom_segment(data = df_seg_horz_filt, mapping = aes(x = x, xend = xend, y = y, yend = yend, color = Station), size = .8, lineend = 'square') +
-        geom_line(m, mapping = aes(Monyear, Measurement, group = Station, colour = Station), size = 1.1) +
-        geom_point(m, mapping = aes(Monyear, Measurement, group = Station, colour = Station, shape = Station), size = 3) +
+        geom_line(m, mapping = aes(Monyear, Value, group = Station, colour = Station), size = 1.1) +
+        geom_point(m, mapping = aes(Monyear, Value, group = Station, colour = Station, shape = Station), size = 3) +
         blank_theme +
         theme(
           axis.text.x = element_text(size = x_ftsize, color = 'white'),
@@ -154,8 +173,8 @@ for (i in seq(length(analytes))){
       p <- ggplot() +
         geom_segment(data = df_seg_vert_filt, mapping = aes(x = x, xend = xend, y = y, yend = yend, color = Station), size = .8, lty = 5) +
         geom_segment(data = df_seg_horz_filt, mapping = aes(x = x, xend = xend, y = y, yend = yend, color = Station), size = .8, lineend = 'square') +
-        geom_line(m, mapping = aes(Monyear, Measurement, group = Station, colour = Station), size = 1.1) +
-        geom_point(m, mapping = aes(Monyear, Measurement, group = Station, colour = Station, shape = Station), size = 3) +
+        geom_line(m, mapping = aes(Monyear, Value, group = Station, colour = Station), size = 1.1) +
+        geom_point(m, mapping = aes(Monyear, Value, group = Station, colour = Station, shape = Station), size = 3) +
         blank_theme +
         theme(
           # axis.text.y = element_text(size = y_ftsize, color = 'white'),
@@ -173,8 +192,8 @@ for (i in seq(length(analytes))){
       p <- ggplot() +
         geom_segment(data = df_seg_vert_filt, mapping = aes(x = x, xend = xend, y = y, yend = yend, color = Station), size = .8, lty = 5) +
         geom_segment(data = df_seg_horz_filt, mapping = aes(x = x, xend = xend, y = y, yend = yend, color = Station), size = .8, lineend = 'square') +
-        geom_line(m, mapping = aes(Monyear, Measurement, group = Station, colour = Station), size = 1.1) +
-        geom_point(m, mapping = aes(Monyear, Measurement, group = Station, colour = Station, shape = Station), size = 3) +
+        geom_line(m, mapping = aes(Monyear, Value, group = Station, colour = Station), size = 1.1) +
+        geom_point(m, mapping = aes(Monyear, Value, group = Station, colour = Station, shape = Station), size = 3) +
         blank_theme +
         theme(
           axis.text.x = element_text(size = x_ftsize, color = 'white'),
@@ -194,8 +213,8 @@ for (i in seq(length(analytes))){
       p <- ggplot() +
         geom_segment(data = df_seg_vert_filt, mapping = aes(x = x, xend = xend, y = y, yend = yend, color = Station), size = .8, lty = 5) +
         geom_segment(data = df_seg_horz_filt, mapping = aes(x = x, xend = xend, y = y, yend = yend, color = Station), size = .8, lineend = 'square') +
-        geom_line(m, mapping = aes(Monyear, Measurement, group = Station, colour = Station), size = 1.1) +
-        geom_point(m, mapping = aes(Monyear, Measurement, group = Station, colour = Station, shape = Station), size = 3) +
+        geom_line(m, mapping = aes(Monyear, Value, group = Station, colour = Station), size = 1.1) +
+        geom_point(m, mapping = aes(Monyear, Value, group = Station, colour = Station, shape = Station), size = 3) +
         blank_theme +
         theme(
           # axis.text.y = element_text(size = y_ftsize, color = 'white'),
@@ -213,8 +232,8 @@ for (i in seq(length(analytes))){
       p <- ggplot() +
         geom_segment(data = df_seg_vert_filt, mapping = aes(x = x, xend = xend, y = y, yend = yend, color = Station), size = .8, lty = 5) +
         geom_segment(data = df_seg_horz_filt, mapping = aes(x = x, xend = xend, y = y, yend = yend, color = Station), size = .8, lineend = 'square') +
-        geom_line(m, mapping = aes(Monyear, Measurement, group = Station, colour = Station), size = 1.1) +
-        geom_point(m, mapping = aes(Monyear, Measurement, group = Station, colour = Station, shape = Station), size = 3) +
+        geom_line(m, mapping = aes(Monyear, Value, group = Station, colour = Station), size = 1.1) +
+        geom_point(m, mapping = aes(Monyear, Value, group = Station, colour = Station, shape = Station), size = 3) +
         blank_theme +
         theme(
           axis.text.x = element_text(size = x_ftsize, color = 'white'),
@@ -234,8 +253,8 @@ for (i in seq(length(analytes))){
       p <- ggplot() +
         geom_segment(data = df_seg_vert_filt, mapping = aes(x = x, xend = xend, y = y, yend = yend, color = Station), size = .8, lty = 5) +
         geom_segment(data = df_seg_horz_filt, mapping = aes(x = x, xend = xend, y = y, yend = yend, color = Station), size = .8, lineend = 'square') +
-        geom_line(m, mapping = aes(Monyear, Measurement, group = Station, colour = Station), size = 1.1) +
-        geom_point(m, mapping = aes(Monyear, Measurement, group = Station, colour = Station, shape = Station), size = 3) +
+        geom_line(m, mapping = aes(Monyear, Value, group = Station, colour = Station), size = 1.1) +
+        geom_point(m, mapping = aes(Monyear, Value, group = Station, colour = Station, shape = Station), size = 3) +
         blank_theme +
         theme(
           # axis.text.y = element_text(size = y_ftsize, color = 'white'),
@@ -257,20 +276,20 @@ for (i in seq(length(analytes))){
 }
 ```
 
-```{r 2x2}
-source('annualReport_funcs.R')
 
+
+```{r 2x2}
 analytes <- unique(df_wq_two$Analyte)
 
 #create segment subset
-seg_subset <-subset(df_wq_two, is.na(df_wq_two$Measurement))
+seg_subset <-subset(df_wq_two, df_wq_two$Sign == '<')
 
 #create segment df
 df_seg_vert = data.frame(
   x = seg_subset$Monyear,
   xend = seg_subset$Monyear,
   y = 0,
-  yend = seg_subset$RL,
+  yend = seg_subset$Value,
   Analyte = seg_subset$Analyte,
   Station = seg_subset$Station,
   Region = seg_subset$Region,
@@ -281,8 +300,8 @@ df_seg_vert = data.frame(
 df_seg_horz = data.frame(
   x = seg_subset$Monyear-10,
   xend = seg_subset$Monyear+10,
-  y = seg_subset$RL,
-  yend = seg_subset$RL,
+  y = seg_subset$Value,
+  yend = seg_subset$Value,
   Analyte = seg_subset$Analyte,
   Station = seg_subset$Station,
   Region = seg_subset$Region,
@@ -306,15 +325,16 @@ for (i in seq(length(analytes))){
     filter(Analyte == analytes[i])
   
   if (analytes[i] != 'SpCndSurface') {
-    y_max <- max(df_wq_two_filt$Measurement, na.rm = TRUE)
+    y_max <- max(df_wq_two_filt$Value, na.rm = TRUE)
   } else {
-    y_max_int <- max(df_wq_two_filt[df_wq_two_filt$Region %in% int_delta,]$Measurement, na.rm = TRUE)
-    y_max_out <- max(df_wq_two_filt[!df_wq_two_filt$Region %in% int_delta,]$Measurement, na.rm = TRUE)
+    y_max_int <- max(df_wq_two_filt[df_wq_two_filt$Region %in% int_delta,]$Value, na.rm = TRUE)
+    y_max_out <- max(df_wq_two_filt[!df_wq_two_filt$Region %in% int_delta,]$Value, na.rm = TRUE)
   }
 
   out <- by(data = df_wq_two_filt, INDICES = df_wq_two_filt$Region, FUN = function(m) {
     m <- droplevels(m)
     cur_region = as.character(unique(m$Region[[1]]))
+    print(cur_region)
     
     if (analytes[i] == 'SpCndSurface') {
       if(cur_region %in% int_delta) {
@@ -344,8 +364,8 @@ for (i in seq(length(analytes))){
       p <- ggplot() +
         geom_segment(data = df_seg_vert_filt, mapping = aes(x = x, xend = xend, y = y, yend = yend, color = Station), size = .8, lty = 5) +
         geom_segment(data = df_seg_horz_filt, mapping = aes(x = x, xend = xend, y = y, yend = yend, color = Station), size = .8, lineend = 'square') +
-        geom_line(m, mapping = aes(Monyear, Measurement, group = Station, colour = Station), size = 1.1) +
-        geom_point(m, mapping = aes(Monyear, Measurement, group = Station, colour = Station, shape = Station), size = 3) +
+        geom_line(m, mapping = aes(Monyear, Value, group = Station, colour = Station), size = 1.1) +
+        geom_point(m, mapping = aes(Monyear, Value, group = Station, colour = Station, shape = Station), size = 3) +
         blank_theme +
         theme(
           axis.text.x = element_text(size = x_ftsize, color = 'white'),
@@ -363,8 +383,8 @@ for (i in seq(length(analytes))){
       p <- ggplot() +
         geom_segment(data = df_seg_vert_filt, mapping = aes(x = x, xend = xend, y = y, yend = yend, color = Station), size = .8, lty = 5) +
         geom_segment(data = df_seg_horz_filt, mapping = aes(x = x, xend = xend, y = y, yend = yend, color = Station), size = .8, lineend = 'square') +
-        geom_line(m, mapping = aes(Monyear, Measurement, group = Station, colour = Station), size = 1.1) +
-        geom_point(m, mapping = aes(Monyear, Measurement, group = Station, colour = Station, shape = Station), size = 3) +
+        geom_line(m, mapping = aes(Monyear, Value, group = Station, colour = Station), size = 1.1) +
+        geom_point(m, mapping = aes(Monyear, Value, group = Station, colour = Station, shape = Station), size = 3) +
         blank_theme +
         theme(
           axis.text.x = element_text(size = x_ftsize, color = 'white'),
@@ -382,8 +402,8 @@ for (i in seq(length(analytes))){
       p <- ggplot() +
         geom_segment(data = df_seg_vert_filt, mapping = aes(x = x, xend = xend, y = y, yend = yend, color = Station), size = .8, lty = 5) +
         geom_segment(data = df_seg_horz_filt, mapping = aes(x = x, xend = xend, y = y, yend = yend, color = Station), size = .8, lineend = 'square') +
-        geom_line(m, mapping = aes(Monyear, Measurement, group = Station, colour = Station), size = 1.1) +
-        geom_point(m, mapping = aes(Monyear, Measurement, group = Station, colour = Station, shape = Station), size = 3) +
+        geom_line(m, mapping = aes(Monyear, Value, group = Station, colour = Station), size = 1.1) +
+        geom_point(m, mapping = aes(Monyear, Value, group = Station, colour = Station, shape = Station), size = 3) +
         blank_theme +
         theme(
           axis.text.x = element_text(size = x_ftsize, color = 'white'),
@@ -401,8 +421,8 @@ for (i in seq(length(analytes))){
       p <- ggplot() +
         geom_segment(data = df_seg_vert_filt, mapping = aes(x = x, xend = xend, y = y, yend = yend, color = Station), size = .8, lty = 5) +
         geom_segment(data = df_seg_horz_filt, mapping = aes(x = x, xend = xend, y = y, yend = yend, color = Station), size = .8, lineend = 'square') +
-        geom_line(m, mapping = aes(Monyear, Measurement, group = Station, colour = Station), size = 1.1) +
-        geom_point(m, mapping = aes(Monyear, Measurement, group = Station, colour = Station, shape = Station), size = 3) +
+        geom_line(m, mapping = aes(Monyear, Value, group = Station, colour = Station), size = 1.1) +
+        geom_point(m, mapping = aes(Monyear, Value, group = Station, colour = Station, shape = Station), size = 3) +
         blank_theme +
         theme(
           axis.text.x = element_text(size = x_ftsize, color = 'white'),
@@ -420,8 +440,8 @@ for (i in seq(length(analytes))){
       p <- ggplot() +
         geom_segment(data = df_seg_vert_filt, mapping = aes(x = x, xend = xend, y = y, yend = yend, color = Station), size = .8, lty = 5) +
         geom_segment(data = df_seg_horz_filt, mapping = aes(x = x, xend = xend, y = y, yend = yend, color = Station), size = .8, lineend = 'square') +
-        geom_line(m, mapping = aes(Monyear, Measurement, group = Station, colour = Station), size = 1.1) +
-        geom_point(m, mapping = aes(Monyear, Measurement, group = Station, colour = Station, shape = Station), size = 3) +
+        geom_line(m, mapping = aes(Monyear, Value, group = Station, colour = Station), size = 1.1) +
+        geom_point(m, mapping = aes(Monyear, Value, group = Station, colour = Station, shape = Station), size = 3) +
         blank_theme +
         ylim(0, y_max) +
         scale_x_date(labels = date_format('%b-%y'), breaks = m$Monyear) +
@@ -435,8 +455,8 @@ for (i in seq(length(analytes))){
       p <- ggplot() +
         geom_segment(data = df_seg_vert_filt, mapping = aes(x = x, xend = xend, y = y, yend = yend, color = Station), size = .8, lty = 5) +
         geom_segment(data = df_seg_horz_filt, mapping = aes(x = x, xend = xend, y = y, yend = yend, color = Station), size = .8, lineend = 'square') +
-        geom_line(m, mapping = aes(Monyear, Measurement, group = Station, colour = Station), size = 1.1) +
-        geom_point(m, mapping = aes(Monyear, Measurement, group = Station, colour = Station, shape = Station), size = 3) +
+        geom_line(m, mapping = aes(Monyear, Value, group = Station, colour = Station), size = 1.1) +
+        geom_point(m, mapping = aes(Monyear, Value, group = Station, colour = Station, shape = Station), size = 3) +
         blank_theme +
         ylim(0, y_max) +
         scale_x_date(labels = date_format('%b-%y'), breaks = m$Monyear) +
@@ -447,10 +467,20 @@ for (i in seq(length(analytes))){
     }
   }
   )
-  
   # test <- ggarrange(out, ncol = 3, nrow = 2)
-  graph <- marrangeGrob(out, ncol=2, nrow=3, top=textGrob(plt_names[i],gp=gpar(fontsize=16, fontface='bold')))
+  my_grobs = lapply(out, ggplotGrob)
+  
+  graph <- marrangeGrob(grobs = as.grob(out), ncol=2, nrow=3, top=textGrob(plt_names[i],gp=gpar(fontsize=16, fontface='bold')))
   ggsave(paste('ARGraph_Long_',analytes[i],'.jpg', sep=''), graph, width = 9.5, height = 10.5, unit = 'in') #4.7, 19
 }
+```
+```{r}
+out
+```
+
+```{r}
+library("grid")
+library("ggplotify")
+out[1]
 ```
 

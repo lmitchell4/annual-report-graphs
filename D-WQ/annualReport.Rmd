@@ -10,148 +10,137 @@
 library(zoo)
 library(scales)
 library(tidyverse)
-library(ggplot2)
 library(lubridate)
 library(NADA)
 
 # import functions
-source('annualReport_funcs.R')
+source('D-WQ/annualReport_funcs.R')
 ```
 
 ```{r message=FALSE}
-#import data
-wq_dat <- read_csv('C:/R/annual-report-graphs/2018-2019 Discrete WQ Data_060320.csv')
+# import data
+df_wq <- read_csv('D-WQ/Data/EMP_delta_water_quality_1975_2020.csv', col_types = cols(.default = 'c'))
 
-#convert month to abbrv
-wq_dat$Month <- month.abb[wq_dat$Month]
+# convert month to abbrv
+df_wq$Year <- year(as.Date(df_wq$Date, '%m/%d/%Y'))
+df_wq$Month <- month(as.Date(df_wq$Date, '%m/%d/%Y'))
+df_wq$Month <- month.abb[df_wq$Month]
 
-#add month-year column
-wq_dat$Monyear <- paste(wq_dat$Month,wq_dat$Year, sep = ' ')
+# add month-year column
+df_wq$Monyear <- paste(df_wq$Month,df_wq$Year, sep = ' ')
 
-#add 'full group' column (ie. region + month-year)
-wq_dat$Full_group <- paste(wq_dat$Region,wq_dat$Monyear, sep = ',')
+# assign regions
+df_wq <- assign_regions(df_wq)
 
-check <- subset(wq_dat,DissNitrateNitrite_sign == '<', c(Station,Region,Monyear,DissNitrateNitrite))
+# add 'full group' column (ie. region + month-year)
+df_wq$FullGroup <- paste(df_wq$Region,df_wq$Monyear, sep = ' - ')
+df_wq$FullGroup <- as.factor(df_wq$FullGroup)
+
+year <- year(Sys.Date())-1
+
+df_wq <- subset(df_wq, Year %in% c(year-1,year),  select = c('Station','Monyear','Region','FullGroup','SpCndSurface_sign','SpCndSurface_val','TurbiditySurface_sign','TurbiditySurface_val','Chla_sign','Chla_val','DissAmmonia_sign','DissAmmonia_val','DissNitrateNitrite_sign','DissNitrateNitrite_val','TotPhos_sign','TotPhos_val'))
+
+# organize df
+df_wq <- df_wq %>%
+  pivot_longer(cols = contains('_'), names_pattern = '(.*)_(.*)', names_to = c('Analyte','Int')) %>%
+  pivot_wider(names_from = Int, values_from = value) %>%
+  rename(Sign = sign, Value = val)
+
+df_wq <- subset(df_wq, !is.na(Region))
+df_wq <- subset(df_wq, Value != 'ND')
+df_wq$Value <- as.numeric(df_wq$Value)
+df_wq$Sign <- ifelse(df_wq$Sign == '<', TRUE, FALSE)
 ```
 
 ```{r}
-#change sign column to logical
-wq_dat$DissNitrateNitrite_sign[wq_dat$DissNitrateNitrite_sign == '<'] <- TRUE
-wq_dat$DissNitrateNitrite_sign[is.na(wq_dat$DissNitrateNitrite_sign)] <- FALSE
-wq_dat$DissNitrateNitrite_sign <- as.logical(wq_dat$DissNitrateNitrite_sign)
+# create csv files of stats
+analytes <- unique(df_wq$Analyte)
+df_list <- list()
+df_sum_list <- list()
 
-#change type of full group column to factor
-wq_dat$Full_group <- as.factor(wq_dat$Full_group)
-```
-U
-```{r}
-#define vectors for cenfit function
-obs <- wq_dat$DissNitrateNitrite
-censored <- wq_dat$DissNitrateNitrite_sign
-groups <- wq_dat$Full_group
 
-cen_dat <- cenfit(obs, censored, groups)
+for (i in seq(analytes)){
+  df_wq_sub <- df_wq %>%
+    filter(Analyte == analytes[i])
 
-df_cenStats <- censtats(cen_dat)
-df_cenStats
-```
+  # define vectors for cenfit function
+  obs <- df_wq_sub$Value
+  censored <- df_wq_sub$Sign
+  groups <- df_wq_sub$FullGroup
 
-```{r}
-analyte_dat[analyte_dat$mean == 0.00000000]
+  # create cenfit df
+  cen_dat <- cenfit(obs, censored, groups)
+  df_temp <- censtats(cen_dat)
+  df_temp$analyte <- analytes[i]
+  df_list[[i]] <- df_temp
+}
+
+df_censtats <- do.call(rbind, df_list)
+
+# clean up df
+df_censtats$mean[df_censtats$mean == 0.00000000] <- NA
+df_censtats$sd[df_censtats$sd == 0.00000000] <- NA
+
+# find sum stats
+# df_sum <- df_censtats %>%
+#   separate(date, c('month', 'year'), ' ') %>%
+#   group_by(analyte, year) %>%
+#   mutate(min_yr = min(mean, na.rm = TRUE),
+#          mean_yr = mean(mean, na.rm = TRUE),
+#          max_yr = max(mean, na.rm = TRUE)) %>%
+#   filter(mean == min_yr | mean == mean_yr | mean == max_yr) %>%
+#   ungroup() %>% 
+#   subset(select = c('analyte','year','month','region','mean','min_yr','max_yr','mean_yr'))
+
+# find sum stats
+df_sum <- df_wq %>%
+  separate(Monyear, c('Month', 'Year'), ' ') %>%
+  group_by(Analyte, Year) %>%
+  mutate(min_yr = min(Value, na.rm = TRUE),
+         mean_yr = mean(Value, na.rm = TRUE),
+         max_yr = max(Value, na.rm = TRUE)) %>%
+  filter(Value == min_yr | Value == mean_yr | Value == max_yr) %>%
+  ungroup() %>% 
+  subset(select = c('Analyte','Year','Month','Station','Region','Sign','Value','min_yr','max_yr','mean_yr'))
+
+df_sum$Sign <- ifelse(df_sum$Sign == TRUE, '<', '=')
+
+test <- df_sum %>%
+  pivot_wider(cols = c('month','region'), names_pattern = '(.*)_(.*)', names_to = c('Analyte','Int'))
+
+# write csvs
+write_csv(df_censtats, paste0('D-WQ/',year-1,'-',year,'_annualReport_allStats.csv'))
+write_csv(df_sum, paste0('D-WQ/',year-1,'-',year,'_annualReport_sumStats.csv'))
 ```
 
 ```{r warning=FALSE, message=FALSE}
-analyte_dat <- read_csv('C:/R/AnnualReport/DissNitrateNitrite.csv')
-
-#fix dates
-analyte_dat$monyear <- as.Date(strptime(analyte_dat$date, '%m/%d/%Y'),'%b-%y')
-
-#set no mean to NA
-analyte_dat$mean[analyte_dat$mean == 0.00000000] <- NA
-
-#create segment subset
-seg_subset <-subset(analyte_dat, is.na(analyte_dat$mean))
-
-#create segment df
-seg_dat = data.frame(
-  x = seg_subset$monyear,
-  xend = seg_subset$monyear,
-  y = 0,
-  yend = seg_subset$RL,
-  region = seg_subset$region
-)
-
-analyte_dat
-```
-
-```{r}
-#create theme
-blank_theme <- theme_bw() + theme(#panel.border = element_blank(),
-                      # panel.grid.major = element_blank(),
-                       panel.grid.major.x = element_blank() ,
-                       panel.grid.minor = element_blank(),
-                       axis.line = element_blank(),#line(color = 'black'),
-                       axis.text = element_text(color = 'black', size = 10, family = 'sans'),
-                       axis.text.x = element_text(angle = 90, vjust=0.5, margin = margin(t = 1)),
-                       axis.title.x = element_blank(),#text(size = 14, family = 'sans'),
-                       axis.title.y = element_blank(),#text(size = 14, family = 'sans'),
-                       plot.title = element_text(size=13, face='bold', hjust = 0.5),
-                       legend.position='top',
-                       legend.title = element_blank())
-#graph
-ggplot() +
-  geom_segment(data = seg_dat, aes(x = x, xend = xend, y = y, yend = yend, color = region), size = 3, linetype = 2) +
-  geom_line(data = analyte_dat, aes(x = monyear, y = mean, group = region, color = region), size = 3) +
-  geom_point(data = analyte_dat, aes(x = monyear, y = mean, group = region, color = region, fill = region), shape = 21, size = 5) +
-  scale_color_manual(values = c('#17becf','#ff7f0e','#2ca02c','#d62728','#e377c2','#8c564b')) +
-  scale_fill_manual(values = c('#17becf','#ff7f0e','#2ca02c','#d62728','#e377c2','#8c564b')) +
-  ylim(0,2.1) +
-  ggtitle(bquote(bold(paste('Chlorophyll ', bolditalic('\u03b1'),' (\u03bc','g/L)')))) +
-  scale_x_date(labels = date_format('%b-%y'), breaks = '1 month') +
-  blank_theme
-
-#ggsave(filename = 'C:/R/AnnualReport/Chla_1.png', plot = last_plot(), width = 7.3, height = 4.8)
-```
-```{r}
-colnames(analyte_dat)
-```
-
-```{r}
-wq_dat$Monyear <- format(strptime(wq_dat$Date, '%m/%d/%Y'),'%Y-%m')
-wq_dat$Monyear <- as.Date(as.yearmon(wq_dat$Monyear))
-
-test <-wq_dat %>% 
-  group_by(Region,Monyear) %>% 
-  summarise(SpCndSurface_Avg = mean(SpCndSurface),
-            TurbiditySurface_Avg = mean(TurbiditySurface))
-
-```
-
-```{r}
-test1 <- test[test$Region == 'Central Delta' | test$Region == 'Northern Interior Delta' | test$Region == 'Southern Interior Delta',]
-```
-
-```{r}
-#fix dates
-#wq_dat$Monyear <- as.Date(strptime(wq_dat$Date, '%m/%d/%Y'),'%b-%y')
-
-ggplot() +
-  geom_line(data = test, aes(x = Monyear, y = SpCndSurface_Avg, group = Region, color = Region), size = 1.3) +
-  geom_point(data = test, aes(x = Monyear, y = SpCndSurface_Avg, group = Region, color = Region, fill = Region), size = 3) +
-  scale_color_manual(values =  c('#17becf','#ff7f0e','#2ca02c','#d62728','#e377c2','#8c564b')) +
-  scale_fill_manual(values = c('#17becf','#ff7f0e','#2ca02c','#d62728','#e377c2','#8c564b')) +
-  ggtitle(bquote(bold(paste('Specific Conductance (',"\u03bc",'S/cm)')))) +
-  scale_x_date(labels = date_format('%b-%y'), breaks = '1 month') +
-  blank_theme
-
-ggsave(filename = 'C:/R/AnnualReport/SpCndSurface2.png', plot = last_plot(), width = 7.3, height = 4.8)
+# analyte_dat <- read_csv('C:/R/AnnualReport/DissNitrateNitrite.csv')
+# 
+# #fix dates
+# analyte_dat$monyear <- as.Date(strptime(analyte_dat$date, '%m/%d/%Y'),'%b-%y')
+# 
+# #create segment subset
+# seg_subset <-subset(analyte_dat, is.na(analyte_dat$mean))
+# 
+# #create segment df
+# seg_dat = data.frame(
+#   x = seg_subset$monyear,
+#   xend = seg_subset$monyear,
+#   y = 0,
+#   yend = seg_subset$RL,
+#   region = seg_subset$region
+#   
+# 
+# )
+# 
+# analyte_dat
 ```
 
 ```{r Useful Funcs}
-showMethods(class=class(cen_dat), where=search())
-
-selectMethod(show, class(cen_dat))
-
-map_df(boop, ~as.data.frame(.x), .id="id")
+# showMethods(class=class(cen_dat), where=search())
+# 
+# selectMethod(show, class(cen_dat))
+# 
+# map_df(boop, ~as.data.frame(.x), .id="id")
 ```
 

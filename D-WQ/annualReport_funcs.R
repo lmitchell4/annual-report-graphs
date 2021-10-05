@@ -1,5 +1,18 @@
 library(tidyverse)
 
+assign_regions <- function(df){
+  df %>% mutate(
+    Region = case_when(
+      Station == 'D16' | Station == 'D19' | Station == 'D26' | Station == 'D28A' ~ 'Central Delta',
+      Station =='D10' | Station == 'D12' | Station == 'D22' | Station == 'D4' ~ 'Confluence',
+      Station =='C3A' | Station == 'NZ068' ~ 'Northern Interior Delta',
+      Station =='D41' | Station == 'D41A' | Station == 'D6' | Station == 'NZ002' | Station == 'NZ004' | Station == 'NZ325' ~ 'San Pablo Bay',
+      Station == 'C10A' | Station == 'C9' | Station == 'MD10A' | Station == 'P8' ~ 'Southern Interior Delta',
+      Station == 'D7' | Station == 'D8' | Station == 'NZ032' | Station == 'NZS42' ~ 'Suisun & Grizzly Bays'
+    )
+  )
+}
+
 # adapted from NADA package
 censtats <- function(object){
   x = object
@@ -29,14 +42,13 @@ censtats <- function(object){
     rownames(ret) = names(s$strata)
   }
 
-    df_ret = as.data.frame(ret)
+  df_ret = as.data.frame(ret)
   df_ret <- cbind(region = rownames(df_ret), df_ret)
   rownames(df_ret) <- 1:nrow(df_ret)
-
   df_ret <- df_ret %>%
-    separate(Region, c('region', 'date'), ' - ') %>%
-    separate(Region, c('rm', 'region'), '=')
-  
+    separate(region, c('region', 'date'), ' - ') %>%
+    separate(region, c('rm', 'region'), '=')
+
   df_ret <- subset(df_ret, select = -c(rm))
   
   return(df_ret)
